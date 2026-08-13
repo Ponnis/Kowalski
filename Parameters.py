@@ -13,7 +13,7 @@ debug = False
 a = 1  # au
 solar_XUV = 2334 # erg/cm²/s  e9 actually
 eta_cool = 1e-1
-eta_heat = 20
+eta_heat = 0.01
 gamma = 5/3
 irho = 0
 im = 1
@@ -25,6 +25,10 @@ n_timesteps = 100000
 ### CHEMISTRY ###
 n_e = 1e9 # Electron number density
 X_co = 0.004
+X_h2  = 0.86
+X_he  = 0.14
+X_h   = 1e-5
 X_h2o = 0.0031
-X_ch4 = 1e-5
+X_ch4 = 1e-20
+X_h3j = 1e-5
 ### HEATING & COOLING ###
