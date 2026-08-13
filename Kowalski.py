@@ -2,149 +2,59 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import Constants as c
+import Parameters as p
+import Helpers as h
+import Heatingcooling as hc
 import matplotlib.pyplot as plt
 import matplotlib.image as image
-
-###### PARAMETERS ######
-n_cells = 100
-r_min = c.R_JUPITER # cm
-r_max = c.R_JUPITER*1.02 # cm
-mass = c.M_JUPITER # g
-n_ghost = 2
-T = 200 # K
-m_bar = 2.4*c.M_HYDROGEN # Mean molecular mass in g
-P_max = 1e-3*c.BAR_TO_CGS # Dyne/cm²
-CFL = 0.2
-debug = False
-a = 1  # au
-solar_XUV = 5.2e5 # erg/cm²/s  e9 actually
-eta_cool = 1e-1
-eta_heat = 2e-1
-gamma = 5/3
-irho = 0
-im = 1
-ie = 2
-iv = 1
-iP = 2
-n_timesteps = 100000
-
-def get_temperatures(w):
-    """
-    Gets temperatures given primitives
-    """
-    
-    T = w[iP] * m_bar / (w[irho] * c.K_B_cgs)
-    return T
-
-def get_number_density(w):
-    """
-    Gets number densities given primitives
-    """
-    
-    T = get_temperatures(w)
-    P = w[iP]
-    n = P/(c.K_B_cgs*T)
-    return n
-
-def compute_CH4_cooling(w):
-    """
-    Simple mimic of LTE CH4 cooling from the exomol cooling function.
-    """
-    
-    Tgas = get_temperatures(w)
-    n = get_number_density(w)
-    
-    n_ch4 = 1e-3*n # mixing ratio of 1 ppm, just a placeholder for ish JPT value
-    Q_CH4 = np.zeros_like(Tgas)
-    
-    for i in range(len(Tgas)):
-        
-        if Tgas[i] > 1500:
-            Q_CH4[i] = 2.98128643e-13
-        elif Tgas[i] < 75:
-            Q_CH4[i] = 6.1e-31*(Tgas[i]**3.56)*np.exp(-36.28/Tgas[i])
-        else:
-            Q_CH4[i] = 6.81e-19*(Tgas[i]**1.91)*np.exp(-1515.26/Tgas[i])
-            
-    Q_CH4 = Q_CH4*n_ch4*2*c.PI
-        
-    return -Q_CH4
-    
-    
-def compute_xuv_heating(w, r_center):
-    """
-    Single-band Beer-Lambert XUV heating.
-    Returns heating in [erg/cm^3/s] at each cell centre.
-    This is not in any way physical, just to test perturbations.
-    """
-    
-    eta       = 0.15                        # heating efficiency
-    sigma_xuv = 2.5e-20                     # cm^2, H photoionisation cross-section
-    F_top     = solar_XUV / (a**2)          # flux at top of atmosphere [erg/cm^2/s]
-    floor = 1e-25
-    
-    # Number density of absorbers [cm^-3]
-    n_abs = w[irho] / m_bar
-    
-    # Optical depth integrated downward from the top
-    dr   = r_center[1] - r_center[0]
-    tau  = np.zeros(n_cells)
-    for i in range(n_cells - 2, -1, -1):
-        tau[i] = tau[i+1] + sigma_xuv * n_abs[i+1] * dr
-    #print(f"tau=1 at cell {np.argmin(np.abs(tau - 1.0))}, r = {r_center[np.argmin(np.abs(tau-1.0))]/c.R_JUPITER:.4f} R_J")
-    # Volumetric heating rate [erg/cm^3/s]
-    
-    Q = eta * sigma_xuv * n_abs * F_top * np.exp(-tau)
-    
-    for i in range(len(Q)):
-        if Q[i]<floor:
-            Q[i] = 0
-    
-    return Q
 
 def compute_heating_cooling(w, r_center):
     """
     Collection method for all the heating and cooling effects
     """
     
-    Q_xuv = compute_xuv_heating(w, r_center)
-    Q_CH4 = compute_CH4_cooling(w)
-    Q_total = eta_heat*(Q_xuv) + eta_cool*(Q_CH4)
+    Q_xuv = hc.compute_xuv_heating(w, r_center)
+    Q_CH4 = hc.compute_CH4_cooling(w)
+    Q_CO = hc.compute_CO_cooling(w)
+    Q_mg1, Q_mg2, Q_na2, Q_k1, Q_ff = hc.compute_metal_line_cooling(w)
+    Q_cools = [Q_mg1, Q_mg2, Q_na2, Q_k1, Q_ff, Q_CH4, Q_CO]
+    Q_heats = [Q_xuv]
+    Q_total = p.eta_heat*sum(Q_heats) - p.eta_cool*sum(Q_cools)
     
-    return Q_total
+    return Q_total, Q_cools, Q_heats
     
 def sound_speed(P, rho):
     """
-    Calculates the sound speed Sqrt(gamma*P/rho)
+    Calculates the sound speed Sqrt(p.gamma*P/rho)
     """
     
-    return np.sqrt(gamma*P/rho)
+    return np.sqrt(p.gamma*P/rho)
 
 def calc_face_fluxes(U, w, phi, r_center):
     """
     Calculates the fluxes at the cell faces by 
     """
     
-    F_face = np.zeros((3, n_cells + 1))
+    F_face = np.zeros((3, p.n_cells + 1))
 
     # Bottom face (boring)
     F_face[:, 0] = calc_flux(U[:, 0], U[:, 1], w[:, 0], w[:, 1])
     
-    for i in range(1, n_cells):
+    for i in range(1, p.n_cells):
         dphi = phi[i] - phi[i-1]           # cell-centred derivative
 
         # Construct left face values according to 
-        P_L   = w[iP,  i-1] - w[irho, i-1] * dphi / 2
-        rho_L = w[irho, i-1]
-        v_L   = w[iv,   i-1]
-        E_L   = P_L / (gamma - 1) + 0.5 * rho_L * v_L**2
+        P_L   = w[p.iP,  i-1] - w[p.irho, i-1] * dphi / 2
+        rho_L = w[p.irho, i-1]
+        v_L   = w[p.iv,   i-1]
+        E_L   = P_L / (p.gamma - 1) + 0.5 * rho_L * v_L**2
         U_L   = np.array([rho_L, rho_L * v_L, E_L])
         w_L   = np.array([rho_L, v_L, P_L])
 
-        P_R   = w[iP,  i]   + w[irho, i]   * dphi / 2
-        rho_R = w[irho, i]
-        v_R   = w[iv,   i]
-        E_R   = P_R / (gamma - 1) + 0.5 * rho_R * v_R**2
+        P_R   = w[p.iP,  i]   + w[p.irho, i]   * dphi / 2
+        rho_R = w[p.irho, i]
+        v_R   = w[p.iv,   i]
+        E_R   = P_R / (p.gamma - 1) + 0.5 * rho_R * v_R**2
         U_R   = np.array([rho_R, rho_R * v_R, E_R])
         w_R   = np.array([rho_R, v_R, P_R])
 
@@ -152,16 +62,16 @@ def calc_face_fluxes(U, w, phi, r_center):
     
     # Top boundary face — MK16 linear reconstruction + transmissive outflow
     dr       = r_center[1] - r_center[0]
-    phi_ext  = -c.G_CGS * mass / (r_center[-1] + dr)   # one ghost cell beyond top
+    phi_ext  = -c.G_CGS * p.mass / (r_center[-1] + dr)   # one ghost cell beyond top
     dphi_top = phi_ext - phi[-1]                         # positive: going outward
     
-    P_top   = w[iP,  -1] - w[irho, -1] * dphi_top / 2
-    rho_top = w[irho, -1]
-    v_top   = w[iv,   -1]
-    E_top   = P_top / (gamma - 1) + 0.5 * rho_top * v_top**2
+    P_top   = w[p.iP,  -1] - w[p.irho, -1] * dphi_top / 2
+    rho_top = w[p.irho, -1]
+    v_top   = w[p.iv,   -1]
+    E_top   = P_top / (p.gamma - 1) + 0.5 * rho_top * v_top**2
     w_top   = np.array([rho_top, v_top,          P_top])
     U_top   = np.array([rho_top, rho_top * v_top, E_top])
-    F_face[:, n_cells] = calc_flux(U_top, U_top, w_top, w_top)  # transmissive outflow, basically what should leave the sim
+    F_face[:, p.n_cells] = calc_flux(U_top, U_top, w_top, w_top)  # transmissive outflow, basically what should leave the sim
         
     return F_face    
 
@@ -170,7 +80,7 @@ def calc_star_flux(U, w, S_k, S_star, F_k):
     Calculates the flux at the middle barrier between two cells.
     """
     
-    U_star = w[irho]*((S_k - w[iv])/(S_k - S_star))*np.array([1,S_star,(U[ie]/w[irho] + (S_star- w[iv])*(S_star + w[iP]/(w[irho]*(S_k-w[iv]))))])
+    U_star = w[p.irho]*((S_k - w[p.iv])/(S_k - S_star))*np.array([1,S_star,(U[p.ie]/w[p.irho] + (S_star- w[p.iv])*(S_star + w[p.iP]/(w[p.irho]*(S_k-w[p.iv]))))])
     F_star = F_k + S_k*(U_star - U)
     return F_star
 
@@ -182,23 +92,23 @@ def calc_flux(U_L, U_R, w_L, w_R):
     """
     true_flux = 0
     # calculate local sound speed
-    cs_L = sound_speed(w_L[iP], w_L[irho])
-    cs_R = sound_speed(w_R[iP], w_R[irho])
+    cs_L = sound_speed(w_L[p.iP], w_L[p.irho])
+    cs_R = sound_speed(w_R[p.iP], w_R[p.irho])
     
     # find wave speeds
-    S_L = min(w_L[iv]-cs_L, w_R[iv]-cs_R)
-    S_R = max(w_L[iv]+cs_L, w_R[iv]+cs_R)
+    S_L = min(w_L[p.iv]-cs_L, w_R[p.iv]-cs_R)
+    S_R = max(w_L[p.iv]+cs_L, w_R[p.iv]+cs_R)
     
     # find the middle wave speed    
-    S_star = (w_R[iP] - w_L[iP] + w_L[irho]*w_L[iv]*(S_L-w_L[iv]) -  w_R[irho]*w_R[iv]*(S_R-w_R[iv]))/(w_L[irho]*(S_L - w_L[iv])- w_R[irho]*(S_R - w_R[iv]))# no idea why this abomination is called star still
+    S_star = (w_R[p.iP] - w_L[p.iP] + w_L[p.irho]*w_L[p.iv]*(S_L-w_L[p.iv]) -  w_R[p.irho]*w_R[p.iv]*(S_R-w_R[p.iv]))/(w_L[p.irho]*(S_L - w_L[p.iv])- w_R[p.irho]*(S_R - w_R[p.iv]))# no idea why this abomination is called star still
     
     # Get the left and right fluxes
-    f_L_rho = U_L[im] 
-    f_L_m = U_L[im]**2.0 / U_L[irho] + w_L[iP] 
-    f_L_e = U_L[im] / U_L[irho] * ( U_L[ie] + w_L[iP] )
-    f_R_rho = U_R[im] 
-    f_R_m = U_R[im]**2.0 / U_R[irho] + w_R[iP] 
-    f_R_e = U_R[im] / U_R[irho] * ( U_R[ie] + w_R[iP] )
+    f_L_rho = U_L[p.im] 
+    f_L_m = U_L[p.im]**2.0 / U_L[p.irho] + w_L[p.iP] 
+    f_L_e = U_L[p.im] / U_L[p.irho] * ( U_L[p.ie] + w_L[p.iP] )
+    f_R_rho = U_R[p.im] 
+    f_R_m = U_R[p.im]**2.0 / U_R[p.irho] + w_R[p.iP] 
+    f_R_e = U_R[p.im] / U_R[p.irho] * ( U_R[p.ie] + w_R[p.iP] )
     
     F_L = np.array([f_L_rho, f_L_m, f_L_e])
     F_R = np.array([f_R_rho, f_R_m, f_R_e])
@@ -225,11 +135,11 @@ def conservative_to_primitive(U,r):
     Converts the array of conserved quantities (U) to the primitive ones (w).
     """
     
-    rho = U[irho]
-    v = U[im] / rho
-    phi = -c.G_CGS*mass/r
-    # E = P/(gamma - 1) + 0.5 * rho * v^2  => P = (E - 0.5 * rho * v^2) * (gamma - 1)
-    P = (U[ie] - 0.5 * rho * v**2 ) * (gamma - 1)
+    rho = U[p.irho]
+    v = U[p.im] / rho
+    phi = -c.G_CGS*p.mass/r
+    # E = P/(p.gamma - 1) + 0.5 * rho * v^2  => P = (E - 0.5 * rho * v^2) * (p.gamma - 1)
+    P = (U[p.ie] - 0.5 * rho * v**2 ) * (p.gamma - 1)
     
     return np.array([rho, v, P])
 
@@ -241,14 +151,14 @@ def primitive_to_conservative(w, phi, r):
     rho = w[0]
     v = w[1]
     P = w[2]
-    E = P/(gamma-1) + 1/2*rho*v**2
+    E = P/(p.gamma-1) + 1/2*rho*v**2
     u1 = rho
     u2 = v*rho
     u3 = E
     f1 = rho*v
     f2 = rho*v**2 + P
     f3 = (E+P)*v
-    s1 = np.zeros(n_cells)
+    s1 = np.zeros(p.n_cells)
     s2 = -rho
     s3 = -rho*v
     U = np.array([u1,u2,u3]) # Conserved variables
@@ -265,12 +175,12 @@ def calc_dt(r_center, w):
     """
     
     dr = r_center[1] - r_center[0]
-    cs = sound_speed(w[iP], w[irho])
+    cs = sound_speed(w[p.iP], w[p.irho])
     
     # Maximum speed is fluid velocity + sound speed
-    v_max = np.max(np.abs(w[iv]) + cs)
+    v_max = np.max(np.abs(w[p.iv]) + cs)
     
-    dt = CFL * dr / v_max
+    dt = p.CFL * dr / v_max
     return dt
     
 def plot_initial_conditions(P,temp,n):
@@ -299,9 +209,9 @@ def calc_face(x):
     Calculates the cell face quantity of a given central quantity. E.g x_i{+1/2}
     """
     
-    face = np.zeros(n_cells+1)
+    face = np.zeros(p.n_cells+1)
     
-    for i in range(1, n_cells):
+    for i in range(1, p.n_cells):
         face[i] = (x[i-1] + x[i]) / 2
     face[0] = 2*x[0] - x[1] # linear extrapolation
     
@@ -317,7 +227,7 @@ def populate_primitive(rho, v, P):
     return w
 
 def initialise_r_center():
-    r_faces = np.linspace(r_min, r_max, n_cells + 1)  # n+1 faces for n cells since bottom cell face doesn't count
+    r_faces = np.linspace(p.r_min, p.r_max, p.n_cells + 1)  # n+1 faces for n cells since bottom cell face doesn't count
     r = 0.5 * (r_faces[:-1] + r_faces[1:])            # midpoints
     return r
 
@@ -328,7 +238,7 @@ def initialise_v():
     """
     
     # Assume initial hydrostatic condition
-    v = np.full(n_cells, 0)
+    v = np.full(p.n_cells, 0)
     
     return v
 
@@ -340,7 +250,7 @@ def initialise_T(isothermal=True):
     
     temp = 0
     if isothermal:
-        temp = np.full(n_cells, T) 
+        temp = np.full(p.n_cells, p.T) 
     return temp                     
 
 def initialise_mbar():
@@ -348,7 +258,7 @@ def initialise_mbar():
     Initialises a constant mean molecular mass profile according to the given parameter.
     """
     
-    mbar = np.full(n_cells, m_bar)
+    mbar = np.full(p.n_cells, p.m_bar)
     return mbar
 
 def initialise_wellbalanced(r_center, temp, mbar):
@@ -358,12 +268,12 @@ def initialise_wellbalanced(r_center, temp, mbar):
     mbar_face = calc_face(mbar)
     temp_face = calc_face(temp)
     
-    phi = -c.G_CGS*mass/r_center # Gravitational potential cell centered
-    P = np.zeros(n_cells)
+    phi = -c.G_CGS*p.mass/r_center # Gravitational potential cell centered
+    P = np.zeros(p.n_cells)
     
-    P[0] = P_max
-    for i in range(1,n_cells):
-        if debug:
+    P[0] = p.P_max
+    for i in range(1,p.n_cells):
+        if p.debug:
             print(f'P_i-1 = {P[i-1]}, mbar_face = {mbar_face[i]}, temp_face = {temp_face[i]}, phi_i-1 - phi_i= {phi[i-1]-phi[i]}')
         P[i] = P[i-1]*np.exp(mbar_face[i]/(c.K_B_cgs*temp_face[i])*(phi[i-1]-phi[i]))
         
@@ -379,7 +289,7 @@ def calc_dphi_dr(phi, r_center):
     """
     
     dr = r_center[1] - r_center[0]
-    dphidr = np.zeros(n_cells)
+    dphidr = np.zeros(p.n_cells)
     dphidr[1:-1] = (phi[2:] - phi[:-2]) / (2 * dr)   # centred, cell-centre phi
     dphidr[0]    = (phi[1]  - phi[0])  / dr            # one-sided at bottom
     dphidr[-1]   = (phi[-1] - phi[-2]) / dr            # one-sided at top
@@ -392,7 +302,7 @@ def gravitational_potential(r):
     Calculates the gravitational potential at the cell centers.
     """
     
-    g_r = c.G*mass/r**2
+    g_r = c.G_CGS*p.mass/r**2
     return g_r
     
 def check_well_balanced_residual(r_center, P, rho, phi, temp, mbar):
@@ -411,7 +321,7 @@ def check_well_balanced_residual(r_center, P, rho, phi, temp, mbar):
         
         # What the pressure SHOULD be based on the discrete equation
         P_expected = P[i-1] * np.exp(mbar_face[i] / (c.K_B_cgs * temp_face[i]) * (phi[i-1] - phi[i]))
-        
+        if (p.debug): print(P_expected)
         # Relative error between actual and expected
         error = np.abs(P[i] - P_expected) / P[i]
         
@@ -429,18 +339,18 @@ def check_well_balanced_residual(r_center, P, rho, phi, temp, mbar):
     return max_error
 
 def apply_boundary_conditions(U, phi, r_center):
-    w_real  = conservative_to_primitive(U[:, n_ghost:n_ghost+1], r_center[n_ghost:n_ghost+1])
-    P_real  = w_real[iP,   0]
-    rho_real = w_real[irho, 0]
+    w_real  = conservative_to_primitive(U[:, p.n_ghost:p.n_ghost+1], r_center[p.n_ghost:p.n_ghost+1])
+    P_real  = w_real[p.iP,   0]
+    rho_real = w_real[p.irho, 0]
 
     P_prev = P_real
-    for i in range(n_ghost - 1, -1, -1):
+    for i in range(p.n_ghost - 1, -1, -1):
         P_ghost   = P_prev + rho_real * (phi[i+1] - phi[i])
-        rho_ghost = P_ghost * m_bar / (c.K_B_cgs * T)   # isothermal, OK for BC
-        E_ghost   = P_ghost / (gamma - 1)
-        U[irho, i] = rho_ghost
-        U[im,   i] = 0.0
-        U[ie,   i] = E_ghost
+        rho_ghost = P_ghost * p.m_bar / (c.K_B_cgs * p.T)   # isothermal, OK for BC
+        E_ghost   = P_ghost / (p.gamma - 1)
+        U[p.irho, i] = rho_ghost
+        U[p.im,   i] = 0.0
+        U[p.ie,   i] = E_ghost
         P_prev     = P_ghost
     return U
 
@@ -450,12 +360,12 @@ def update_S(w, dphidr, Q=None):
     """
     
     S = np.array([
-            np.zeros(n_cells),
-            -w[irho] * dphidr,
-            -w[irho] * w[iv] * dphidr
+            np.zeros(p.n_cells),
+            -w[p.irho] * dphidr,
+            -w[p.irho] * w[p.iv] * dphidr
         ])
     if Q is not None:
-        S[ie] += Q
+        S[p.ie] += Q
     return S
 
 def update_U(U, F_face, S, dt, dr):
@@ -464,7 +374,7 @@ def update_U(U, F_face, S, dt, dr):
     """
     
     U_new = np.copy(U)
-    for i in range(n_ghost, n_cells):
+    for i in range(p.n_ghost, p.n_cells):
         U_new[:, i] = U[:, i] \
                     - (dt/dr) * (F_face[:, i+1] - F_face[:, i]) \
                     + dt * S[:, i]
@@ -554,15 +464,15 @@ def modify_kowalski(img_kowalski, U, w, phi, r_center):
     dphidr = calc_dphi_dr(phi, r_center)
 
     # Centred pressure gradient at every cell
-    dPdr       = np.zeros(n_cells)
-    dPdr[1:-1] = (w[iP, 2:] - w[iP, :-2]) / (2 * dr)
-    dPdr[0]    = (w[iP, 1]  - w[iP, 0])   / dr
-    dPdr[-1]   = (w[iP, -1] - w[iP, -2])  / dr
+    dPdr       = np.zeros(p.n_cells)
+    dPdr[1:-1] = (w[p.iP, 2:] - w[p.iP, :-2]) / (2 * dr)
+    dPdr[0]    = (w[p.iP, 1]  - w[p.iP, 0])   / dr
+    dPdr[-1]   = (w[p.iP, -1] - w[p.iP, -2])  / dr
 
     # Relative residual, clipped to [0, 1]
-    grav         = np.abs(w[irho] * dphidr)
+    grav         = np.abs(w[p.irho] * dphidr)
     grav         = np.where(grav > 0, grav, 1.0)
-    residual     = np.clip(np.abs(dPdr + w[irho] * dphidr) / grav, 0.0, 1.0)
+    residual     = np.clip(np.abs(dPdr + w[p.irho] * dphidr) / grav, 0.0, 1.0)
 
     height, width = img_kowalski.shape[:2]
     n_ch          = img_kowalski.shape[2] # Ignore
@@ -572,8 +482,8 @@ def modify_kowalski(img_kowalski, U, w, phi, r_center):
 
     for row in range(height):
         # row 0 = top of image = top of atmosphere = high cell index
-        cell_idx = int((1.0 - row / height) * (n_cells - 1))
-        cell_idx = np.clip(cell_idx, 0, n_cells - 1)
+        cell_idx = int((1.0 - row / height) * (p.n_cells - 1))
+        cell_idx = np.clip(cell_idx, 0, p.n_cells - 1)
         r = float(residual[cell_idx])
 
         # Horizontal shift: rows with large residual slide sideways
@@ -589,7 +499,7 @@ def modify_kowalski(img_kowalski, U, w, phi, r_center):
 
     return img_mod.astype(img_kowalski.dtype)
 
-def analysis(t_max, plot_every=10):
+def analysis(t_max, plot_every=1):
     """
     It's exactly what it sounds like lmao
     """
@@ -605,18 +515,23 @@ def analysis(t_max, plot_every=10):
     P, rho, n, phi = initialise_wellbalanced(r_center, temp, mbar)
 
     w        = populate_primitive(rho, v, P)
+    
     U, F, S  = primitive_to_conservative(w, phi, r_center)
     dphidr   = calc_dphi_dr(phi, r_center)
+    
+    # FIXED: Unpack the tuple correctly[cite: 1]
+    Q_tot, Q_cools, Q_heats = compute_heating_cooling(w, r_center)
 
     check_well_balanced_residual(r_center, P, rho, phi, temp, mbar)
 
     plt.ion()
-    fig, axes = plt.subplots(1, 4, figsize=(15, 6))
+    # FIXED: Changed subplots to (1, 5) to match the unpacked axes[cite: 1]
+    fig, axes = plt.subplots(1, 5, figsize=(18, 6))
     fig.suptitle("Kowalski — live simulation", fontsize=13)
-    ax_rho, ax_v, ax_T, ax_s = axes
+    ax_rho, ax_v, ax_T, ax_s, ax_hc = axes
 
-    P_bar = w[iP] / c.BAR_TO_CGS
-    T_now = w[iP] * m_bar / (w[irho] * c.K_B_cgs)   # ideal gas: T = P*mbar / rho*kB
+    P_bar = w[p.iP] / c.BAR_TO_CGS
+    T_now = w[p.iP] * p.m_bar / (w[p.irho] * c.K_B_cgs)   # ideal gas: T = P*mbar / rho*kB
 
     def init_panel(ax, xdata, xlabel, color, xlog=False):
         line, = ax.plot(xdata, P_bar, lw=2, c=color)
@@ -636,9 +551,28 @@ def analysis(t_max, plot_every=10):
     ax_s.get_yaxis().set_visible(False)
     ax_s.get_xaxis().set_visible(False)
     ax_s.set_title("Stability analysis")
-    line_rho = init_panel(ax_rho, w[irho],     "Density [g cm⁻³]",  "darkorange", xlog=True)
-    line_v   = init_panel(ax_v,   w[iv] / 1e5, "abs Velocity [km s⁻¹]", "darkgreen")
+    line_rho = init_panel(ax_rho, w[p.irho],     "Density [g cm⁻³]",  "darkorange", xlog=True)
+    line_v   = init_panel(ax_v,   w[p.iv] / 1e5, "abs Velocity [km s⁻¹]", "darkgreen")
     line_T   = init_panel(ax_T,   T_now,        "Temperature [K]",   "crimson")
+    
+    # Initialize the Heating & Cooling Panel
+    ax_hc.set_ylabel("Pressure [bar]")
+    ax_hc.set_xlabel("Rates [erg s⁻¹ cm⁻³]")
+    ax_hc.set_yscale('log')
+    ax_hc.set_xscale('log') # Log scale is best for plotting magnitude of rates
+    ax_hc.invert_yaxis()
+    ax_hc.set_ylim(1e-3, 1e-10)
+    ax_hc.set_xlim(1e-30, 1e-3)
+    
+    # Define labels mapping to the Q_cools and Q_heats lists from compute_heating_cooling
+    labels_cool = ["Mg I", "Mg II", "Na II", "K I", "Free-Free", "CH4", "CO"]
+    labels_heat = ["XUV"]
+    
+    # Create line objects for each cooling and heating effect using absolute values
+    lines_cool = [ax_hc.plot(np.abs(q) + 1e-30, P_bar, ls='--', lw=1.5, label=lbl)[0] for q, lbl in zip(Q_cools, labels_cool)]
+    lines_heat = [ax_hc.plot(np.abs(q) + 1e-30, P_bar, ls='-', lw=2.0, label=lbl)[0] for q, lbl in zip(Q_heats, labels_heat)]
+    ax_hc.set_xlim(1e-30, 1e-3)
+    ax_hc.legend(loc='upper right', fontsize='x-small')
 
     time_text = fig.text(0.5, 0.01, "t = 0.00 s", ha="center", fontsize=11)
     plt.tight_layout(rect=[0, 0.04, 1, 0.95])
@@ -646,11 +580,11 @@ def analysis(t_max, plot_every=10):
 
     t    = 0.0
     step = 0
-    old_T = np.zeros(n_cells)
+    old_T = np.zeros(p.n_cells)
     max_dt = 0
     dphidr_init = calc_dphi_dr(phi, r_center)
-    P_grad_init = (w[iP, 2:] - w[iP, :-2]) / (2 * dr)
-    grav_init   = w[irho, 1:-1] * dphidr_init[1:-1]
+    P_grad_init = (w[p.iP, 2:] - w[p.iP, :-2]) / (2 * dr)
+    grav_init   = w[p.irho, 1:-1] * dphidr_init[1:-1]
     res_init    = np.max(np.abs(P_grad_init + grav_init))
     print(f"Residual at t=0: {res_init:.2e}")
 
@@ -659,8 +593,11 @@ def analysis(t_max, plot_every=10):
         U      = apply_boundary_conditions(U, phi, r_center)
         w      = conservative_to_primitive(U, r_center)
         dphidr = calc_dphi_dr(phi, r_center)
-        Q      = compute_heating_cooling(w, r_center)  
-        S      = update_S(w, dphidr, Q)
+        
+        # FIXED: Correctly unpack the tuple so update_S gets the total scalar[cite: 1]
+        Q_tot, Q_cools, Q_heats = compute_heating_cooling(w, r_center)  
+        S      = update_S(w, dphidr, Q_tot)
+        
         dt     = calc_dt(r_center, w)
         fluxes = calc_face_fluxes(U, w, phi, r_center)
         U      = update_U(U, fluxes, S, dt, dr)
@@ -668,36 +605,52 @@ def analysis(t_max, plot_every=10):
         t    += dt
         step += 1
 
-        P_grad       = (w[iP, 2:] - w[iP, :-2]) / (2 * dr)
-        grav_force   = w[irho, 1:-1] * dphidr[1:-1]
+        P_grad       = (w[p.iP, 2:] - w[p.iP, :-2]) / (2 * dr)
+        grav_force   = w[p.irho, 1:-1] * dphidr[1:-1]
         max_residual = np.max(np.abs(P_grad + grav_force))
         
         if step == 1e9:
             pert_start = 200
             pert_end = 400
             print("Adding density perturbation")
-            w[irho, pert_start:pert_end] = w[irho, pert_start:pert_end] * 2
+            w[p.irho, pert_start:pert_end] = w[p.irho, pert_start:pert_end] * 2
             # Recompute U consistently from the perturbed w
-            E_perturbed = w[iP,pert_start:pert_end] / (gamma - 1) + 0.5 * w[irho, pert_start:pert_end] * w[iv, pert_start:pert_end]**2
-            U[irho, pert_start:pert_end] = w[irho, pert_start:pert_end]
-            U[im,   pert_start:pert_end] = w[irho, pert_start:pert_end] * w[iv, pert_start:pert_end]
-            U[ie,   pert_start:pert_end] = E_perturbed
+            E_perturbed = w[p.iP,pert_start:pert_end] / (p.gamma - 1) + 0.5 * w[p.irho, pert_start:pert_end] * w[p.iv, pert_start:pert_end]**2
+            U[p.irho, pert_start:pert_end] = w[p.irho, pert_start:pert_end]
+            U[p.im,   pert_start:pert_end] = w[p.irho, pert_start:pert_end] * w[p.iv, pert_start:pert_end]
+            U[p.ie,   pert_start:pert_end] = E_perturbed
+            
         if step % plot_every == 0:
             
-            P_now = w[iP] / c.BAR_TO_CGS
-            T_now = w[iP] * m_bar / (w[irho] * c.K_B_cgs)
+            P_now = w[p.iP] / c.BAR_TO_CGS
+            T_now = w[p.iP] * p.m_bar / (w[p.irho] * c.K_B_cgs)
 
-            line_rho.set_xdata(w[irho])
-            line_v.set_xdata(abs(w[iv]) / 1e5)
+            line_rho.set_xdata(w[p.irho])
+            line_v.set_xdata(abs(w[p.iv]) / 1e5)
             line_T.set_xdata(T_now)
             
+            # NEW: Update the x-data for all heating and cooling lines
+            for line, q in zip(lines_cool, Q_cools):
+                line.set_xdata(np.abs(q) + 1e-30)
+                line.set_ydata(P_now)
+                
+            for line, q in zip(lines_heat, Q_heats):
+                line.set_xdata(np.abs(q) + 1e-30)
+                line.set_ydata(P_now)
+            ax_hc.set_xlim(1e-30, 1e-3)
             kowalski = modify_kowalski(image_kowalski, U, w, phi, r_center)
             im_kowalski.set_data(kowalski)
+            
             for line in [line_rho, line_v, line_T]:
                 line.set_ydata(P_now)
 
             for ax in axes:
                 ax.autoscale_view()
+                # NEW: Reset limits for ax_hc dynamically based on rate magnitudes
+                if ax == ax_hc:
+                    min_x = max(1e-30, np.min([np.min(np.abs(q) + 1e-30) for q in Q_cools + Q_heats]))
+                    max_x = max(1e-10, np.max([np.max(np.abs(q)) for q in Q_cools + Q_heats]))
+                    ax.set_xlim(min_x / 10, max_x * 10)
 
             max_dt = (max(abs(T_now - old_T)))
             time_text.set_text(
@@ -710,8 +663,6 @@ def analysis(t_max, plot_every=10):
     plt.ioff()
     plt.show()
     print(f"Finished: {step} steps, t = {t:.4e} s")
-
-
     
 analysis(t_max=1e4)   # run for 10,000 seconds
 
