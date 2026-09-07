@@ -9,6 +9,10 @@ def Q_fit(T_eval, coeffs):
     return 10.0 ** np.polyval(coeffs, np.log10(T_temp))
     
 def compute_CO_cooling(w):
+    """
+    Radiative cooling from CO, just a line fit while waiting for proper radiative cooling.
+    """
+    
     T = h.get_temperatures(w)
     n = h.get_number_density(w)
     
@@ -29,7 +33,8 @@ def compute_CO_cooling(w):
 
 def compute_CH4_cooling(w):
     """
-    Simple mimic of LTE CH4 cooling from the exomol cooling function.
+    Simple mimic of LTE CH4 cooling from the exomol cooling function. Placeholder while waiting
+    for generic radiative cooling.
     """
     
     Tgas = h.get_temperatures(w)
@@ -76,7 +81,8 @@ def compute_H2O_cooling(w, r_center):
     N_H2O = np.zeros_like(Tgas)
     N_H2O[-1] = 0.5 * dr * n_h2o[-1]
     N_H2O[:-1] = N_H2O[-1] + np.cumsum(integrand[::-1])[::-1]
-
+    
+    # Sorry about the math in advance
     etaJT = 7.7 * (Tgas / 1000.0)**0.5
     tauT = (4.0 * N_H2O * A0) / (etaJT * Tgas * 1.18e7 * DopplerWidth * (17.0**2.0))
     
@@ -127,7 +133,7 @@ def compute_xuv_heating(w, r_center):
     
     eta       = 1                      # heating efficiency
     sigma_xuv = 2.5e-20                     # cm^2, H photoionisation cross-section
-    F_top     = p.solar_XUV / (p.a**2)          # flux at top of atmosphere [erg/cm^2/s]
+    F_top     = p.solar_XUV / (p.a**2)          # flux at top of atmosphere [erg/cm^2/s], just inverse sq law
     floor = 1e-25
     
     # Number density of absorbers [cm^-3]
@@ -138,7 +144,7 @@ def compute_xuv_heating(w, r_center):
     tau  = np.zeros(p.n_cells)
     for i in range(p.n_cells - 2, -1, -1):
         tau[i] = tau[i+1] + sigma_xuv * n_abs[i+1] * dr
-    #print(f"tau=1 at cell {np.argmin(np.abs(tau - 1.0))}, r = {r_center[np.argmin(np.abs(tau-1.0))]/c.R_JUPITER:.4f} R_J")
+        
     # Volumetric heating rate [erg/cm^3/s]
     
     Q = eta * sigma_xuv * n_abs * F_top * np.exp(-tau)
@@ -150,7 +156,9 @@ def compute_xuv_heating(w, r_center):
     return Q
 
 def compute_metal_line_cooling(w):
-    # All from Huang et al 2017
+    """
+    Some metal line cooling values from Huang+2017
+    """
     T = h.get_temperatures(w)
     T4 = T/1e4
     #g = 2J+1
@@ -172,6 +180,7 @@ def compute_H3j_cooling(w):
     Computes H3+ IR cooling in the upper thermosphere.
     Uses the thin-limit analytical parameterization (e.g., Miller et al. 2013, 
     Glover & Jappsen 2007) for the fundamental 3-4 micron vibrational modes.
+    Placeholder waiting for the radiative cooling generic.
     """
     Tgas = h.get_temperatures(w)
     n_tot = h.get_number_density(w)
@@ -192,8 +201,6 @@ def compute_H3j_cooling(w):
     # Volumetric cooling rate [erg cm^-3 s^-1]
     Q_h3plus = n_h3plus * L_h3plus
     return Q_h3plus
-
-import numpy as np
 
 def compute_IR_heating(w, r_center):
     """
@@ -232,11 +239,13 @@ def compute_IR_heating(w, r_center):
 
     # 3. Radiation Parameters & Band Fluxes
     eta_heat   = getattr(p, 'eta_heat', 0.15)         # Thermalization efficiency
+    
+    # This will be changed to just a black-body approximation based on temperature
     F_nir_h2o  = getattr(p, 'F_nir_h2o', 3.2e7)       # erg cm^-2 s^-1
     F_nir_co2  = getattr(p, 'F_nir_co2', 8.0e6)       # erg cm^-2 s^-1
     F_nir_ch4  = getattr(p, 'F_nir_ch4', 1.2e7)       # erg cm^-2 s^-1
 
-    # Cross-sections [cm^2]
+    # Cross-sections [cm^2] THESE WILL BE REPLACED WITH THE ACTUAL ONES.
     sigma_h2o  = getattr(p, 'sigma_nir_h2o', 1.2e-21)
     sigma_co2  = getattr(p, 'sigma_nir_co2', 3.5e-21) * np.sqrt(Tgas / 300.0)
     sigma_ch4  = getattr(p, 'sigma_nir_ch4', 2.0e-21)

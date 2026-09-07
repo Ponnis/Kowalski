@@ -27,4 +27,3 @@ EV_TO_ERG = 1.60217663e-12
 KJMOL_TO_EV = 96.4853321233100184
 BAR_TO_CGS = 1e6 # dyne/cm²
 J_TO_ERG = 1e7
-kompot_dir = "/home/nils-martin/Repos/TheKompotCode-master/Projects/"

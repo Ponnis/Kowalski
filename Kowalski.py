@@ -623,7 +623,7 @@ def analysis(t_max):
     mbar     = initialise_mbar()
     temp     = initialise_T()
 
-    # Pre-equilibration
+    # Basically choose if you want to pre-equilibriate the heating and cooling rates.
     if(p.RCEstart):
         P, rho, temp, phi = equilibrate_thermal_structure(
             r_center, mbar, temp, dt_thermal=1e4, max_steps=1000, tol_K_per_day=0.05
@@ -640,7 +640,8 @@ def analysis(t_max):
     check_well_balanced_residual(r_center, P, rho, phi, temp, mbar)
 
     plt.ion()
-    # 2x3 Grid Layout
+    
+    # ------------------------- HERE STARTS PLOTTING ------------------------------
     fig, axes = plt.subplots(2, 3, figsize=(15, 8))
     fig.suptitle("Kowalski — live simulation", fontsize=13)
     (ax_rho, ax_v, ax_T), (ax_hc, ax_s, ax_diag) = axes
@@ -728,6 +729,7 @@ def analysis(t_max):
     step = 0
     old_T = np.zeros(p.n_cells)
 
+    # ------------------ MAIN UPDATE OF CONSERVED QUANTITIES LOOP --------------------------
     while t < t_max:
         U      = apply_boundary_conditions(U, phi, r_center)
         w      = conservative_to_primitive(U, r_center)
@@ -780,6 +782,7 @@ def analysis(t_max):
                 line.set_xdata(dTdt + 1e-30)
                 line.set_ydata(P_now)
 
+            # make Kowalski more evil, the worse your residual is
             kowalski = modify_kowalski(image_kowalski, U, w, phi, r_center)
             im_kowalski.set_data(kowalski)
             
@@ -804,214 +807,7 @@ def analysis(t_max):
 
     plt.ioff()
     plt.show()
-# def analysis(t_max, plot_every=500):
-#     """
-#     It's exactly what it sounds like lmao
-#     """
-    
-#     im_path  = "kowalski.png"
-#     image_kowalski = image.imread(im_path)
-#     call_kowalski()
-#     r_center = initialise_r_center()
-#     dr       = r_center[1] - r_center[0]
-#     mbar     = initialise_mbar()
-#     temp     = initialise_T()
 
-#     # 2. RUN THERMAL PRE-EQUILIBRATION HERE
-#     # This relaxes T, P, and rho to radiative balance before hydro starts
-#     P, rho, temp, phi = equilibrate_thermal_structure(
-#         r_center, mbar, temp, dt_thermal=1e4, max_steps=5000, tol_K_per_day=0.05
-#     )
-#     v        = initialise_v()
-#     #P, rho, n, phi = initialise_wellbalanced(r_center, temp, mbar)
-
-#     w        = populate_primitive(rho, v, P)
-    
-#     U, F, S  = primitive_to_conservative(w, phi, r_center)
-#     dphidr   = calc_dphi_dr(phi, r_center)
-    
-#     # FIXED: Unpack the tuple correctly[cite: 1]
-#     Q_tot, Q_cools, Q_heats = compute_heating_cooling(w, r_center)
-
-#     check_well_balanced_residual(r_center, P, rho, phi, temp, mbar)
-
-#     plt.ion()
-#     # FIXED: Changed subplots to (1, 5) to match the unpacked axes[cite: 1]
-#     fig, axes = plt.subplots(1, 5, figsize=(18, 6))
-#     fig.suptitle("Kowalski — live simulation", fontsize=13)
-#     ax_rho, ax_v, ax_T, ax_s, ax_hc = axes
-
-#     P_bar = w[p.iP] / c.BAR_TO_CGS
-#     T_now = w[p.iP] * p.m_bar / (w[p.irho] * c.K_B_cgs)   # ideal gas: T = P*mbar / rho*kB
-
-#     def init_panel(ax, xdata, xlabel, color, xlog=False):
-#         line, = ax.plot(xdata, P_bar, lw=2, c=color)
-#         ax.set_ylabel("Pressure [bar]")
-#         ax.set_xlabel(xlabel)
-#         ax.set_yscale('log')
-#         ax.invert_yaxis()
-#         ax.set_ylim(1e-3, 1e-10)
-#         if xlog:
-#             ax.set_xscale('log')
-#         return line
-    
-#     ax_v.set_xscale('log')
-#     ax_v.set_xlim(1e-6, 1e4)
-#     ax_T.set_xlim(0,6000)
-#     im_kowalski = ax_s.imshow(image_kowalski, aspect='auto', extent=(0.4, 0.6, .5, .7))
-#     ax_s.get_yaxis().set_visible(False)
-#     ax_s.get_xaxis().set_visible(False)
-#     ax_s.set_title("Stability analysis")
-#     line_rho = init_panel(ax_rho, w[p.irho],     "Density [g cm⁻³]",  "darkorange", xlog=True)
-#     line_v   = init_panel(ax_v,   w[p.iv] / 1e5, "abs Velocity [km s⁻¹]", "darkgreen")
-#     line_T   = init_panel(ax_T,   T_now,        "Temperature [K]",   "crimson")
-    
-#     # Initialize the Heating & Cooling Panel
-#     ax_hc.set_ylabel("Pressure [bar]")
-#     ax_hc.set_xlabel("Rates [erg s⁻¹ cm⁻³]")
-#     ax_hc.set_yscale('log')
-#     ax_hc.set_xscale('log') # Log scale is best for plotting magnitude of rates
-#     ax_hc.invert_yaxis()
-#     ax_hc.set_ylim(1e-3, 1e-10)
-#     ax_hc.set_xlim(1e-30, 1e-3)
-    
-#     # Define labels mapping to the Q_cools and Q_heats lists from compute_heating_cooling
-#     labels_cool = ["CH4", "CO", "H2O"]
-#     labels_heat = ["XUV"]
-    
-#     # Create line objects for each cooling and heating effect using absolute values
-#     # lines_cool = [ax_hc.plot(np.abs(q) + 1e-30, P_bar, lw=2, label=lbl)[0] for q, lbl in zip(Q_cools, labels_cool)]
-#     # lines_heat = [ax_hc.plot(np.abs(q) + 1e-30, P_bar, ls='-', lw=2.0, label=lbl)[0] for q, lbl in zip(Q_heats, labels_heat)]
-#     # ax_hc.set_xlim(1e-30, 1e-3)
-#     cp = 1.4e8  
-
-#     # Convert K/s to K/day for readability
-#     sec_per_day = 86400.0  
-#     rho = w[p.irho]
-#     dTdt_cools = [(q / (rho * cp)) * sec_per_day for q in Q_cools]
-#     dTdt_heats = [(q / (rho * cp)) * sec_per_day for q in Q_heats]
-
-#     lines_cool = [
-#         ax_hc.plot(np.abs(dTdt) + 1e-30, P_bar, lw=2, label=lbl)[0]
-#         for dTdt, lbl in zip(dTdt_cools, labels_cool)
-#     ]
-#     lines_heat = [
-#         ax_hc.plot(np.abs(dTdt) + 1e-30, P_bar, ls='-', lw=2.0, label=lbl)[0]
-#         for dTdt, lbl in zip(dTdt_heats, labels_heat)
-#     ]
-
-#     # Label and set appropriate x-limits for K/day
-#     ax_hc.set_xlabel(r'Heating/Cooling Rate [$\text{K day}^{-1}$]')
-#     ax_hc.set_xlim(1e-4, 1e8)  # Captures slow deep-cooling to fast upper-heating
-#     ax_hc.legend(loc='upper right', fontsize='medium')
-
-#     time_text = fig.text(0.5, 0.01, "t = 0.00 s", ha="center", fontsize=11)
-#     plt.tight_layout(rect=[0, 0.04, 1, 0.95])
-#     plt.pause(0.01)
-
-#     t    = 0.0
-#     step = 0
-#     old_T = np.zeros(p.n_cells)
-#     max_dt = 0
-#     dphidr_init = calc_dphi_dr(phi, r_center)
-#     P_grad_init = (w[p.iP, 2:] - w[p.iP, :-2]) / (2 * dr)
-#     grav_init   = w[p.irho, 1:-1] * dphidr_init[1:-1]
-#     res_init    = np.max(np.abs(P_grad_init + grav_init))
-#     print(f"Residual at t=0: {res_init:.2e}")
-
-#     while t < t_max:
-            
-#         U      = apply_boundary_conditions(U, phi, r_center)
-#         w      = conservative_to_primitive(U, r_center)
-#         dphidr = calc_dphi_dr(phi, r_center)
-        
-#         # FIXED: Correctly unpack the tuple so update_S gets the total scalar[cite: 1]
-#         Q_tot, Q_cools, Q_heats = compute_heating_cooling(w, r_center)  
-#         S      = update_S(w, dphidr, Q_tot)
-        
-#         dt     = calc_dt(r_center, w)
-#         fluxes = calc_face_fluxes(U, w, phi, r_center)
-#         U      = update_U(U, fluxes, S, dt, dr)
-
-#         t    += dt
-#         step += 1
-
-#         P_grad       = (w[p.iP, 2:] - w[p.iP, :-2]) / (2 * dr)
-#         grav_force   = w[p.irho, 1:-1] * dphidr[1:-1]
-#         max_residual = np.max(np.abs(P_grad + grav_force))
-        
-#         if step % 100 == 0:
-#             # pert_start = 200
-#             # pert_end = 400
-#             # print("Adding density perturbation")
-#             # w[p.irho, pert_start:pert_end] = w[p.irho, pert_start:pert_end] * 2
-#             # # Recompute U consistently from the perturbed w
-#             # E_perturbed = w[p.iP,pert_start:pert_end] / (p.gamma - 1) + 0.5 * w[p.irho, pert_start:pert_end] * w[p.iv, pert_start:pert_end]**2
-#             # U[p.irho, pert_start:pert_end] = w[p.irho, pert_start:pert_end]
-#             # U[p.im,   pert_start:pert_end] = w[p.irho, pert_start:pert_end] * w[p.iv, pert_start:pert_end]
-#             # U[p.ie,   pert_start:pert_end] = E_perturbed
-#             print(f'TIMESTEP = {step}')
-            
-#         if step % plot_every == 0:
-            
-#             P_now = w[p.iP] / c.BAR_TO_CGS
-#             rho_now = w[p.irho]
-#             T_now = w[p.iP] * p.m_bar / (rho_now * c.K_B_cgs)
-
-#             # 1. Specific heat capacity c_p for H2-dominated gas [erg g^-1 K^-1]
-#             # For gamma = 1.4 (diatomic H2): c_p = (gamma / (gamma - 1)) * k_B / m_bar = 3.5 * k_B / m_bar
-#             cp = 3.5 * c.K_B_cgs / p.m_bar
-            
-#             # 2. Conversion factor array from erg s^-1 cm^-3 to K/day
-#             # dT/dt [K/day] = Q [erg s^-1 cm^-3] / (rho * c_p) * 86400 s/day
-#             conv_K_per_day = 86400.0 / (rho_now * cp)
-
-#             line_rho.set_xdata(rho_now)
-#             line_v.set_xdata(abs(w[p.iv]) / 1e5)
-#             line_T.set_xdata(T_now)
-            
-#             # List to hold converted arrays for dynamic x-limit calculations
-#             all_dTdt = []
-
-#             # 3. Update cooling lines in K/day
-#             for line, q in zip(lines_cool, Q_cools):
-#                 dTdt = np.abs(q) * conv_K_per_day
-#                 all_dTdt.append(dTdt)
-#                 line.set_xdata(dTdt + 1e-30)
-#                 line.set_ydata(P_now)
-                
-#             # 4. Update heating lines in K/day
-#             for line, q in zip(lines_heat, Q_heats):
-#                 dTdt = np.abs(q) * conv_K_per_day
-#                 all_dTdt.append(dTdt)
-#                 line.set_xdata(dTdt + 1e-30)
-#                 line.set_ydata(P_now)
-
-#             kowalski = modify_kowalski(image_kowalski, U, w, phi, r_center)
-#             im_kowalski.set_data(kowalski)
-            
-#             for line in [line_rho, line_v, line_T]:
-#                 line.set_ydata(P_now)
-
-#             for ax in axes:
-#                 ax.autoscale_view()
-#                 # 5. Reset x-limits for ax_hc based on K/day values
-#                 if ax == ax_hc:
-#                     min_x = max(1e-6, np.min([np.min(dT + 1e-30) for dT in all_dTdt]))
-#                     max_x = max(1e2,  np.max([np.max(dT) for dT in all_dTdt]))
-#                     ax.set_xlim(min_x / 10.0, max_x * 10.0)
-
-#             max_dt = (max(abs(T_now - old_T)))
-#             time_text.set_text(
-#                 f"t = {t:.4e} s | step = {step} | max residual = {max_residual:.2e}, | max dt = {max_dt:.2e}"
-#             )
-#             fig.canvas.draw()
-#             fig.canvas.flush_events()
-#             old_T = T_now
-
-#     plt.ioff()
-#     plt.show()
-#     print(f"Finished: {step} steps, t = {t:.4e} s")
     
 analysis(t_max=1e6)   # run for 10,000 seconds
 
@@ -1022,4 +818,7 @@ analysis(t_max=1e6)   # run for 10,000 seconds
 TODO
 Add timestepping according to RKF2 (2.2 Käppeli 2016)
 Look at pressure reconstruction 2.1.3
+More advanced parameters
+Generic heating & cooling (either two-stream or calculated LTE + escape approx)
+More advanced/generic XUV or IR heating.
 """
