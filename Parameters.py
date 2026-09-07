@@ -21,7 +21,8 @@ ie = 2
 iv = 1
 iP = 2
 n_timesteps = 100000
-
+RCEstart = False
+plot_freq = 1
 ### CHEMISTRY ###
 n_e = 1e9 # Electron number density
 X_co = 0.004

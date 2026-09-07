@@ -506,9 +506,9 @@ import numpy as np
 
 def equilibrate_thermal_structure(
     r_center, mbar, temp_init, 
-    dt_thermal=1e4, max_steps=10000, 
+    dt_thermal=1e4, max_steps=1000, 
     tol_K_per_day=0.1, tol_rel_imb=0.01,
-    plot_every=500, P_cgs_to_bar=1e-6
+    P_cgs_to_bar=1e-6
 ):
     """
     Relaxes the temperature profile to thermal equilibrium (Q_tot approx 0)
@@ -561,7 +561,7 @@ def equilibrate_thermal_structure(
         # ---------------------------------------------------------------------
         # Live Diagnostic Output & Plotting
         # ---------------------------------------------------------------------
-        if step % plot_every == 0 or step == max_steps - 1:
+        if step % p.plot_freq == 0 or step == max_steps - 1:
             print(
                 f"Thermal Step {step:5d} | "
                 f"Max |dT/dt| = {max_rate:.3e} K/day | "
@@ -614,7 +614,7 @@ def equilibrate_thermal_structure(
 
     return P, rho, temp, phi
 
-def analysis(t_max, plot_every=500):
+def analysis(t_max):
     im_path  = "kowalski.png"
     image_kowalski = image.imread(im_path)
     call_kowalski()
@@ -624,9 +624,13 @@ def analysis(t_max, plot_every=500):
     temp     = initialise_T()
 
     # Pre-equilibration
-    P, rho, temp, phi = equilibrate_thermal_structure(
-        r_center, mbar, temp, dt_thermal=1e4, max_steps=50000, tol_K_per_day=0.05
-    )
+    if(p.RCEstart):
+        P, rho, temp, phi = equilibrate_thermal_structure(
+            r_center, mbar, temp, dt_thermal=1e4, max_steps=1000, tol_K_per_day=0.05
+        )
+    else:
+        P, rho, n, phi = initialise_wellbalanced(r_center, temp, mbar)
+        
     v        = initialise_v()
     w        = populate_primitive(rho, v, P)
     U, F, S  = primitive_to_conservative(w, phi, r_center)
@@ -752,7 +756,7 @@ def analysis(t_max, plot_every=500):
         rel_imb_hist.append(rel_imbalance_max)
         dTdt_max_hist.append(dTdt_day_max)
 
-        if step % plot_every == 0:
+        if step % p.plot_freq == 0:
             P_now = w[p.iP] / c.BAR_TO_CGS
             rho_now = w[p.irho]
             T_now = w[p.iP] * p.m_bar / (rho_now * c.K_B_cgs)
