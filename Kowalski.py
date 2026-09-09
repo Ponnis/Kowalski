@@ -6,6 +6,10 @@ import Helpers as h
 import Heatingcooling as hc
 import matplotlib.pyplot as plt
 import matplotlib.image as image
+import argparse
+import subprocess
+import sys
+from pathlib import Path
 
 def compute_heating_cooling(w, r_center):
     """
@@ -808,8 +812,34 @@ def analysis(t_max):
     plt.ioff()
     plt.show()
 
-    
-analysis(t_max=1e6)   # run for 10,000 seconds
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--doom", action="store_true", help="Launch DOOM instead of running Kompot")
+args = parser.parse_args()
+
+if args.doom:
+    doom_dir = Path(__file__).resolve().parent / "Doom"
+    doom_executable = doom_dir / "doom.AppImage"
+    doom_wad = doom_dir / "freedoom1.wad"
+
+    if not doom_executable.is_file():
+        raise FileNotFoundError(f"DOOM executable not found: {doom_executable}")
+
+    if not doom_wad.is_file():
+        raise FileNotFoundError(f"Freedoom data not found: {doom_wad}")
+
+    subprocess.Popen(
+        [
+            str(doom_executable),
+            "--appimage-extract-and-run",
+            "-iwad",
+            str(doom_wad),
+        ],
+        cwd=doom_dir,
+    )
+    sys.exit(0)
+else:
+    analysis(t_max=1e6)   # run for 10,000 seconds
 
 
 
