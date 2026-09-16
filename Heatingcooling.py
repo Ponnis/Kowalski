@@ -126,34 +126,64 @@ def compute_H2O_cooling(w, r_center):
 
 def compute_xuv_heating(w, r_center):
     """
-    Single-band Beer-Lambert XUV heating.
-    Returns heating in [erg/cm^3/s] at each cell centre.
-    This is not in any way physical, just to test perturbations.
+    Simple grey XUV heating [erg cm^-3 s^-1].
+
+    Spectrum columns:
+        energy [eV], irradiance [eV s^-1 cm^-2 Hz^-1]
+
+    Uses an effective cross section per atmospheric particle.
+    Pass physical cells only, ordered from bottom to top.
     """
-    
-    eta       = 1                      # heating efficiency
-    sigma_xuv = 2.5e-20                     # cm^2, H photoionisation cross-section
-    F_top     = p.solar_XUV / (p.a**2)          # flux at top of atmosphere [erg/cm^2/s], just inverse sq law
-    floor = 1e-25
-    
-    # Number density of absorbers [cm^-3]
-    n_abs = w[p.irho] / p.m_bar
-    
-    # Optical depth integrated downward from the top
-    dr   = r_center[1] - r_center[0]
-    tau  = np.zeros(p.n_cells)
-    for i in range(p.n_cells - 2, -1, -1):
-        tau[i] = tau[i+1] + sigma_xuv * n_abs[i+1] * dr
+
+    # Read and integrate the spectrum once, rather than every timestep.
+    if not hasattr(compute_xuv_heating, "F_reference"):
+        energy, irradiance = np.loadtxt(
+            p.spec_path, skiprows=1, unpack=True
+        )
+
+        order = np.argsort(energy)
+        energy = energy[order]
+        irradiance = irradiance[order]
+
+        if not energy[0] <= p.xuv_emin < p.xuv_emax <= energy[-1]:
+            raise ValueError("Spectrum does not cover the requested XUV range.")
+
+        # Include the exact integration endpoints.
+        inside = (energy > p.xuv_emin) & (energy < p.xuv_emax)
+        E = np.concatenate(([p.xuv_emin], energy[inside], [p.xuv_emax]))
+        Fnu = np.interp(E, energy, irradiance)
+
+        # Integrate F_nu dnu = F_nu dE/h, then convert eV to erg.
         
-    # Volumetric heating rate [erg/cm^3/s]
-    
-    Q = eta * sigma_xuv * n_abs * F_top * np.exp(-tau)
-    
-    for i in range(len(Q)):
-        if Q[i]<floor:
-            Q[i] = 0
-    
+        eV_to_erg = 1.602176634e-12
+
+        integral = np.sum(
+            0.5 * (Fnu[:-1] + Fnu[1:]) * np.diff(E)
+        )
+
+        compute_xuv_heating.F_reference = integral * c.EV_TO_ERG / c.h_EV
+
+    # Incident flux at the planet [erg cm^-2 s^-1].
+    F_top = compute_xuv_heating.F_reference * (p.spec_distance_au / p.a)**2
+
+    # Optical depth across each cell.
+    dr = r_center[1] - r_center[0]
+    n_abs = w[p.irho] / p.m_bar
+    dtau = p.sigma_xuv * n_abs * dr
+
+    # Optical depth ABOVE each cell's upper face.
+    tau_above = np.zeros_like(dtau)
+    tau_above[:-1] = np.cumsum(dtau[:0:-1])[::-1]
+
+    # Incoming flux and energy absorbed within each cell.
+    F_in = F_top * np.exp(-tau_above)
+    absorbed_fraction = -np.expm1(-dtau)  # accurately evaluates 1-exp(-dtau)
+
+    Q = p.eta_xuv * F_in * absorbed_fraction / dr
+
     return Q
+
+
 
 def compute_metal_line_cooling(w):
     """
