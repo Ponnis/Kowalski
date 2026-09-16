@@ -187,7 +187,7 @@ def compute_xuv_heating(w, r_center):
 
 def compute_metal_line_cooling(w):
     """
-    Some metal line cooling values from Huang+2017
+    Some metal line cooling values from Huang+2017 (No idea how physical this is)
     """
     T = h.get_temperatures(w)
     T4 = T/1e4

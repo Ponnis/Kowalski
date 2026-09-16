@@ -465,6 +465,7 @@ def modify_kowalski(img_kowalski, U, w, phi, r_center):
     Kowalski remains static at hydrostatic equilibrium.
     As the residual grows (flow develops), rows shift horizontally
     and wash toward red, proportional to local departure from balance.
+    This is basically what turns Kowalski evil.
     """
     dr     = r_center[1] - r_center[0]
     dphidr = calc_dphi_dr(phi, r_center)
@@ -505,8 +506,6 @@ def modify_kowalski(img_kowalski, U, w, phi, r_center):
 
     return img_mod.astype(img_kowalski.dtype)
 
-import matplotlib.pyplot as plt
-import numpy as np
 
 def equilibrate_thermal_structure(
     r_center, mbar, temp_init, 
@@ -519,16 +518,14 @@ def equilibrate_thermal_structure(
     while keeping v = 0 and maintaining exact hydrostatic balance at each step.
     
     Displays live diagnostic plots of T(P) and Q_heat/Q_cool(P).
+    Please note that this is not true RCE, but just a starting condition.
     """
     temp = np.copy(temp_init)
     cp = 3.5 * c.K_B_cgs / p.m_bar  # c_p for H2 gas
     sec_per_day = 86400.0
 
     print("\n--- Starting Pre-Thermal Equilibration ---")
-
-    # -------------------------------------------------------------------------
-    # Setup Interactive Diagnostic Figure
-    # -------------------------------------------------------------------------
+    # Diagnostics
     plt.ion()
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5.5), sharey=True)
     fig.canvas.manager.set_window_title("Thermal Equilibration Diagnostics")
@@ -539,7 +536,6 @@ def equilibrate_thermal_structure(
         v = np.zeros(p.n_cells)
         w = populate_primitive(rho, v, P)
 
-        # Convert CGS Pressure [dyn/cm^2] to [bar]
         P_bar = P * P_cgs_to_bar
 
         # 2. Compute net thermal heating/cooling components
@@ -562,9 +558,7 @@ def equilibrate_thermal_structure(
         temp += dT
         temp = np.maximum(temp, 100.0) # Temperature floor
 
-        # ---------------------------------------------------------------------
-        # Live Diagnostic Output & Plotting
-        # ---------------------------------------------------------------------
+        # Plot stuff
         if step % p.plot_freq == 0 or step == max_steps - 1:
             print(
                 f"Thermal Step {step:5d} | "
@@ -581,7 +575,7 @@ def equilibrate_thermal_structure(
             ax1.set_xlabel('Temperature $T$ [K]')
             ax1.set_ylabel('Pressure $P$ [bar]')
             ax1.set_yscale('log')
-            ax1.invert_yaxis()  # Put deep atmosphere at bottom, top atmosphere at top
+            ax1.invert_yaxis() 
             ax1.set_title('Thermal Profile $T(P)$')
             ax1.grid(True, which='both', ls=':', alpha=0.5)
             ax1.legend(loc='upper right')
@@ -851,4 +845,6 @@ Look at pressure reconstruction 2.1.3
 More advanced parameters
 Generic heating & cooling (either two-stream or calculated LTE + escape approx)
 More advanced/generic XUV or IR heating.
+2-stream cooling
+Allow chemical model input (e.g a set of mixing ratios)
 """
