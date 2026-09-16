@@ -21,6 +21,7 @@ n_timesteps = 100000
 RCEstart = False
 plot_freq = 1
 ### CHEMISTRY ###
+use_chem_model = True
 n_e = 1e9 # Electron number density
 X_co = 0.004
 X_h2  = 0.86
